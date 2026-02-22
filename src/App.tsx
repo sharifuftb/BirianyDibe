@@ -209,14 +209,22 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to add post');
+        let errorMessage = 'Failed to add post';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.details || errorData.error || errorMessage;
+        } catch (e) {
+          const text = await response.text().catch(() => '');
+          errorMessage = text || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
       setIsAddModalOpen(false);
       setTempLocation(null);
     } catch (error) {
       console.error('Error adding post:', error);
-      alert('পোস্ট যোগ করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+      alert(`পোস্ট যোগ করতে সমস্যা হয়েছে: ${error instanceof Error ? error.message : 'অজানা সমস্যা'}`);
     } finally {
       setIsSubmitting(false);
     }
