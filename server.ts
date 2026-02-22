@@ -11,16 +11,22 @@ const __dirname = path.dirname(__filename);
 
 // Use /tmp for SQLite on Vercel/Serverless
 const dbPath = process.env.NODE_ENV === "production" ? "/tmp/biryani.db" : "biryani.db";
-let db: Database.Database;
+let db: any;
 
 try {
   db = new Database(dbPath);
   console.log(`Database connected at ${dbPath}`);
 } catch (err) {
-  console.error('Failed to connect to database:', err);
-  // Fallback to in-memory if file fails
-  db = new Database(':memory:');
-  console.log('Falling back to in-memory database');
+  console.error('Failed to connect to database, using mock:', err);
+  // Mock DB object to prevent crashes
+  db = {
+    prepare: () => ({
+      run: () => ({ lastInsertRowid: 0 }),
+      get: () => null,
+      all: () => []
+    }),
+    exec: () => {}
+  };
 }
 
 // Initialize Database
@@ -116,44 +122,48 @@ export async function startServer() {
       const { id, user_id, place_name, description, lat, lng, distribution_time } = req.body;
       console.log('Creating post:', { id, place_name });
       
-      // Ensure user exists (mock auth for now)
-      db.prepare("INSERT OR IGNORE INTO users (id, name) VALUES (?, ?)").run(user_id, "Anonymous User");
-
-      const stmt = db.prepare(`
-        INSERT INTO posts (id, user_id, place_name, description, lat, lng, distribution_time)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      stmt.run(id, user_id, place_name, description, lat, lng, distribution_time);
-      
-      const newPost = db.prepare(`
-        SELECT p.*, u.name as user_name, 0 as true_votes, 0 as false_votes
-        FROM posts p
-        LEFT JOIN users u ON p.user_id = u.id
-        WHERE p.id = ?
-      `).get(id);
-
-      if (ioInstance) {
-        ioInstance.emit("post:created", newPost);
+      if (!place_name) {
+        return res.status(400).json({ error: 'Place name is required' });
       }
-      res.status(201).json(newPost);
-    } catch (error) {
-      console.error('Error creating post:', error);
-      // Fallback to memory
+
+      // Try DB first
       try {
-        const { id, user_id, place_name, description, lat, lng, distribution_time } = req.body;
-        const memPost = {
-          id, user_id, place_name, description, lat, lng, distribution_time,
-          user_name: "Anonymous User",
-          true_votes: 0,
-          false_votes: 0,
-          created_at: new Date().toISOString()
-        };
-        memoryPosts.unshift(memPost);
-        if (ioInstance) ioInstance.emit("post:created", memPost);
-        return res.status(201).json(memPost);
-      } catch (memErr) {
-        res.status(500).json({ error: 'Failed to create post', details: error instanceof Error ? error.message : String(error) });
+        db.prepare("INSERT OR IGNORE INTO users (id, name) VALUES (?, ?)").run(user_id, "Anonymous User");
+        const stmt = db.prepare(`
+          INSERT INTO posts (id, user_id, place_name, description, lat, lng, distribution_time)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        stmt.run(id, user_id, place_name, description, lat, lng, distribution_time);
+        
+        const newPost = db.prepare(`
+          SELECT p.*, u.name as user_name, 0 as true_votes, 0 as false_votes
+          FROM posts p
+          LEFT JOIN users u ON p.user_id = u.id
+          WHERE p.id = ?
+        `).get(id);
+
+        if (newPost) {
+          if (ioInstance) ioInstance.emit("post:created", newPost);
+          return res.status(201).json(newPost);
+        }
+      } catch (dbErr) {
+        console.error('DB Insert failed, falling back to memory:', dbErr);
       }
+
+      // Fallback to memory
+      const memPost = {
+        id, user_id, place_name, description, lat, lng, distribution_time,
+        user_name: "Anonymous User",
+        true_votes: 0,
+        false_votes: 0,
+        created_at: new Date().toISOString()
+      };
+      memoryPosts.unshift(memPost);
+      if (ioInstance) ioInstance.emit("post:created", memPost);
+      res.status(201).json(memPost);
+    } catch (error) {
+      console.error('Critical error creating post:', error);
+      res.status(500).json({ error: 'Failed to create post', details: String(error) });
     }
   });
 
