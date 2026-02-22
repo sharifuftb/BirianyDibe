@@ -124,9 +124,23 @@ export default function App() {
 
   // Fetch initial posts
   useEffect(() => {
-    fetch('/api/posts')
-      .then(res => res.json())
-      .then(data => setPosts(data));
+    const fetchPosts = () => {
+      fetch('/api/posts')
+        .then(res => res.json())
+        .then(data => {
+          setPosts(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(data)) {
+              return data;
+            }
+            return prev;
+          });
+        })
+        .catch(err => console.log('Fetch error:', err));
+    };
+
+    fetchPosts();
+    const interval = setInterval(fetchPosts, 15000); // Poll every 15 seconds
+    return () => clearInterval(interval);
   }, []);
 
   // Get user location

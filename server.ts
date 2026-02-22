@@ -53,7 +53,34 @@ let httpServerInstance: any = null;
 let ioInstance: any = null;
 
 // In-memory fallback for serverless environments where DB might fail
-let memoryPosts: any[] = [];
+let memoryPosts: any[] = [
+  {
+    id: 'sample-1',
+    user_id: 'system',
+    user_name: 'এডমিন',
+    place_name: 'ঢাকা বিশ্ববিদ্যালয় এলাকা',
+    description: 'এখানে নিয়মিত রাতে বিরিয়ানি বিতরণ করা হয়।',
+    lat: 23.733,
+    lng: 90.393,
+    distribution_time: new Date().toISOString(),
+    true_votes: 15,
+    false_votes: 1,
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 'sample-2',
+    user_id: 'system',
+    user_name: 'এডমিন',
+    place_name: 'মিরপুর ১০ গোলচত্বর',
+    description: 'শুক্রবার জুমার পর এখানে খিচুড়ি পাওয়া যায়।',
+    lat: 23.807,
+    lng: 90.368,
+    distribution_time: new Date().toISOString(),
+    true_votes: 8,
+    false_votes: 0,
+    created_at: new Date().toISOString()
+  }
+];
 
 export async function startServer() {
   if (appInstance) return { app: appInstance, httpServer: httpServerInstance, io: ioInstance };
