@@ -1,0 +1,7 @@
+{
+  "name": "Biryani Dibe",
+  "description": "A community-driven platform to find and verify free food distribution locations.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
