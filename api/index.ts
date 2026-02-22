@@ -1,6 +1,11 @@
 import { startServer } from "../server.js";
 
+let cachedApp: any = null;
+
 export default async (req: any, res: any) => {
-  const { app } = await startServer();
-  return app(req, res);
+  if (!cachedApp) {
+    const { app } = await startServer();
+    cachedApp = app;
+  }
+  return cachedApp(req, res);
 };

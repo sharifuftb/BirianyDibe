@@ -9,10 +9,23 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("biryani.db");
+// Use /tmp for SQLite on Vercel/Serverless
+const dbPath = process.env.NODE_ENV === "production" ? "/tmp/biryani.db" : "biryani.db";
+let db: Database.Database;
+
+try {
+  db = new Database(dbPath);
+  console.log(`Database connected at ${dbPath}`);
+} catch (err) {
+  console.error('Failed to connect to database:', err);
+  // Fallback to in-memory if file fails
+  db = new Database(':memory:');
+  console.log('Falling back to in-memory database');
+}
 
 // Initialize Database
-db.exec(`
+try {
+  db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT,
@@ -47,12 +60,25 @@ db.exec(`
     reason TEXT
   );
 `);
+} catch (err) {
+  console.error('Failed to initialize database schema:', err);
+}
+
+let appInstance: any = null;
+let httpServerInstance: any = null;
+let ioInstance: any = null;
 
 export async function startServer() {
+  if (appInstance) return { app: appInstance, httpServer: httpServerInstance, io: ioInstance };
+
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer);
   const PORT = 3000;
+
+  appInstance = app;
+  httpServerInstance = httpServer;
+  ioInstance = io;
 
   app.use(express.json());
 
@@ -71,26 +97,32 @@ export async function startServer() {
   });
 
   app.post("/api/posts", (req, res) => {
-    const { id, user_id, place_name, description, lat, lng, distribution_time } = req.body;
-    
-    // Ensure user exists (mock auth for now)
-    db.prepare("INSERT OR IGNORE INTO users (id, name) VALUES (?, ?)").run(user_id, "Anonymous User");
+    try {
+      const { id, user_id, place_name, description, lat, lng, distribution_time } = req.body;
+      console.log('Creating post:', { id, place_name });
+      
+      // Ensure user exists (mock auth for now)
+      db.prepare("INSERT OR IGNORE INTO users (id, name) VALUES (?, ?)").run(user_id, "Anonymous User");
 
-    const stmt = db.prepare(`
-      INSERT INTO posts (id, user_id, place_name, description, lat, lng, distribution_time)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(id, user_id, place_name, description, lat, lng, distribution_time);
-    
-    const newPost = db.prepare(`
-      SELECT p.*, u.name as user_name, 0 as true_votes, 0 as false_votes
-      FROM posts p
-      LEFT JOIN users u ON p.user_id = u.id
-      WHERE p.id = ?
-    `).get(id);
+      const stmt = db.prepare(`
+        INSERT INTO posts (id, user_id, place_name, description, lat, lng, distribution_time)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(id, user_id, place_name, description, lat, lng, distribution_time);
+      
+      const newPost = db.prepare(`
+        SELECT p.*, u.name as user_name, 0 as true_votes, 0 as false_votes
+        FROM posts p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.id = ?
+      `).get(id);
 
-    io.emit("post:created", newPost);
-    res.status(201).json(newPost);
+      if (ioInstance) ioInstance.emit("post:created", newPost);
+      res.status(201).json(newPost);
+    } catch (error) {
+      console.error('Error creating post:', error);
+      res.status(500).json({ error: 'Failed to create post', details: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   app.post("/api/votes", (req, res) => {
@@ -111,7 +143,7 @@ export async function startServer() {
         (SELECT COUNT(*) FROM votes WHERE post_id = ? AND vote_type = 0) as false_votes
     `).get(post_id, post_id);
 
-    io.emit("post:voted", { post_id, ...stats });
+    if (ioInstance) ioInstance.emit("post:voted", { post_id, ...stats });
     res.json({ post_id, ...stats });
   });
 

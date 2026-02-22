@@ -96,6 +96,7 @@ export default function App() {
   const [isSheetExpanded, setIsSheetExpanded] = useState(false);
   const [isPickingLocation, setIsPickingLocation] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [tempLocation, setTempLocation] = useState<[number, number] | null>(null);
   
   const socket = React.useRef<Socket | null>(null);
@@ -199,14 +200,26 @@ export default function App() {
       distribution_time: formData.get('time') as string || new Date().toISOString(),
     };
 
-    await fetch('/api/posts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newPost)
-    });
+    setIsSubmitting(true);
+    try {
+      const response = await fetch('/api/posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPost)
+      });
 
-    setIsAddModalOpen(false);
-    setTempLocation(null);
+      if (!response.ok) {
+        throw new Error('Failed to add post');
+      }
+
+      setIsAddModalOpen(false);
+      setTempLocation(null);
+    } catch (error) {
+      console.error('Error adding post:', error);
+      alert('পোস্ট যোগ করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleMapClick = (lat: number, lng: number) => {
@@ -408,6 +421,7 @@ export default function App() {
             }} 
             onSubmit={handleAddPost}
             tempLocation={tempLocation}
+            isSubmitting={isSubmitting}
           />
         )}
         {selectedPost && (
@@ -467,7 +481,7 @@ function PostCard({ post, onVote, onClick }: { post: Post, onVote: (id: string, 
   );
 }
 
-function AddPostModal({ onClose, onSubmit, tempLocation }: { onClose: () => void, onSubmit: (e: React.FormEvent<HTMLFormElement>) => void, tempLocation: [number, number] | null }) {
+function AddPostModal({ onClose, onSubmit, tempLocation, isSubmitting }: { onClose: () => void, onSubmit: (e: React.FormEvent<HTMLFormElement>) => void, tempLocation: [number, number] | null, isSubmitting: boolean }) {
   return (
     <div className="fixed inset-0 z-[2000] flex items-end sm:items-center justify-center p-0 sm:p-4">
       <motion.div 
@@ -544,9 +558,10 @@ function AddPostModal({ onClose, onSubmit, tempLocation }: { onClose: () => void
             </div>
             <button 
               type="submit" 
-              className="w-full py-4 bg-green-700 text-white rounded-2xl font-bold text-lg shadow-lg shadow-green-700/20 hover:bg-green-800 active:scale-[0.98] transition-all mt-4 mb-8"
+              disabled={isSubmitting}
+              className="w-full py-4 bg-green-700 text-white rounded-2xl font-bold text-lg shadow-lg shadow-green-700/20 hover:bg-green-800 active:scale-[0.98] transition-all mt-4 mb-8 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              পোস্ট করুন
+              {isSubmitting ? 'প্রসেসিং হচ্ছে...' : 'পোস্ট করুন'}
             </button>
           </form>
         </div>
