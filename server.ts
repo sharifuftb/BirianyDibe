@@ -11,63 +11,41 @@ const __dirname = path.dirname(__filename);
 
 // Use /tmp for SQLite on Vercel/Serverless
 const dbPath = process.env.NODE_ENV === "production" ? "/tmp/biryani.db" : "biryani.db";
-let db: any;
+let db: any = null;
 
-try {
-  db = new Database(dbPath);
-  console.log(`Database connected at ${dbPath}`);
-} catch (err) {
-  console.error('Failed to connect to database, using mock:', err);
-  // Mock DB object to prevent crashes
-  db = {
-    prepare: () => ({
-      run: () => ({ lastInsertRowid: 0 }),
-      get: () => null,
-      all: () => []
-    }),
-    exec: () => {}
-  };
-}
-
-// Initialize Database
-try {
-  db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    email TEXT,
-    avatar TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS posts (
-    id TEXT PRIMARY KEY,
-    user_id TEXT,
-    place_name TEXT,
-    description TEXT,
-    lat REAL,
-    lng REAL,
-    distribution_time TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS votes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    post_id TEXT,
-    user_id TEXT,
-    vote_type INTEGER, -- 1 for TRUE, 0 for FALSE
-    UNIQUE(post_id, user_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    post_id TEXT,
-    user_id TEXT,
-    reason TEXT
-  );
-`);
-} catch (err) {
-  console.error('Failed to initialize database schema:', err);
+async function getDb() {
+  if (db) return db;
+  try {
+    const { default: Database } = await import("better-sqlite3");
+    db = new Database(dbPath);
+    console.log(`Database connected at ${dbPath}`);
+    
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT, email TEXT, avatar TEXT);
+      CREATE TABLE IF NOT EXISTS posts (
+        id TEXT PRIMARY KEY, user_id TEXT, place_name TEXT, description TEXT,
+        lat REAL, lng REAL, distribution_time TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS votes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, post_id TEXT, user_id TEXT, vote_type INTEGER,
+        UNIQUE(post_id, user_id)
+      );
+      CREATE TABLE IF NOT EXISTS reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, post_id TEXT, user_id TEXT, reason TEXT
+      );
+    `);
+  } catch (err) {
+    console.error('Database initialization failed, using mock:', err);
+    db = {
+      prepare: (sql: string) => ({
+        run: () => ({ lastInsertRowid: 0 }),
+        get: () => null,
+        all: () => []
+      }),
+      exec: () => {}
+    };
+  }
+  return db;
 }
 
 let appInstance: any = null;
@@ -99,9 +77,10 @@ export async function startServer() {
   app.use(express.json());
 
   // API Routes
-  app.get("/api/posts", (req, res) => {
+  app.get("/api/posts", async (req, res) => {
+    const database = await getDb();
     try {
-      const posts = db.prepare(`
+      const posts = database.prepare(`
         SELECT p.*, 
                u.name as user_name,
                (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.vote_type = 1) as true_votes,
@@ -117,7 +96,8 @@ export async function startServer() {
     }
   });
 
-  app.post("/api/posts", (req, res) => {
+  app.post("/api/posts", async (req, res) => {
+    const database = await getDb();
     try {
       const { id, user_id, place_name, description, lat, lng, distribution_time } = req.body;
       console.log('Creating post:', { id, place_name });
@@ -128,14 +108,14 @@ export async function startServer() {
 
       // Try DB first
       try {
-        db.prepare("INSERT OR IGNORE INTO users (id, name) VALUES (?, ?)").run(user_id, "Anonymous User");
-        const stmt = db.prepare(`
+        database.prepare("INSERT OR IGNORE INTO users (id, name) VALUES (?, ?)").run(user_id, "Anonymous User");
+        const stmt = database.prepare(`
           INSERT INTO posts (id, user_id, place_name, description, lat, lng, distribution_time)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
         stmt.run(id, user_id, place_name, description, lat, lng, distribution_time);
         
-        const newPost = db.prepare(`
+        const newPost = database.prepare(`
           SELECT p.*, u.name as user_name, 0 as true_votes, 0 as false_votes
           FROM posts p
           LEFT JOIN users u ON p.user_id = u.id
@@ -167,20 +147,21 @@ export async function startServer() {
     }
   });
 
-  app.post("/api/votes", (req, res) => {
+  app.post("/api/votes", async (req, res) => {
+    const database = await getDb();
     const { post_id, user_id, vote_type } = req.body;
     console.log(`Vote received: post=${post_id}, user=${user_id}, type=${vote_type}`);
     
     try {
       // Upsert vote
-      const stmt = db.prepare(`
+      const stmt = database.prepare(`
         INSERT INTO votes (post_id, user_id, vote_type)
         VALUES (?, ?, ?)
         ON CONFLICT(post_id, user_id) DO UPDATE SET vote_type = excluded.vote_type
       `);
       stmt.run(post_id, user_id, vote_type);
 
-      const stats = db.prepare(`
+      const stats = database.prepare(`
         SELECT 
           (SELECT COUNT(*) FROM votes WHERE post_id = ? AND vote_type = 1) as true_votes,
           (SELECT COUNT(*) FROM votes WHERE post_id = ? AND vote_type = 0) as false_votes
@@ -190,15 +171,19 @@ export async function startServer() {
       res.json({ post_id, ...stats });
     } catch (err) {
       console.error('Vote error:', err);
-      // Memory fallback for votes is harder, but we can at least return success
       res.json({ post_id, true_votes: 0, false_votes: 0 });
     }
   });
 
-  app.post("/api/reports", (req, res) => {
+  app.post("/api/reports", async (req, res) => {
+    const database = await getDb();
     const { post_id, user_id, reason } = req.body;
-    db.prepare("INSERT INTO reports (post_id, user_id, reason) VALUES (?, ?, ?)").run(post_id, user_id, reason);
-    res.status(201).json({ success: true });
+    try {
+      database.prepare("INSERT INTO reports (post_id, user_id, reason) VALUES (?, ?, ?)").run(post_id, user_id, reason);
+      res.status(201).json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to report' });
+    }
   });
 
   // Vite middleware for development
